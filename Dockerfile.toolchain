@@ -201,6 +201,28 @@ RUN groupadd -g ${GID} ${USERNAME} \
     && echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/${USERNAME} \
     && chmod 0440 /etc/sudoers.d/${USERNAME}
 
+
+RUN cat >> /home/${USERNAME}/.bashrc <<'EOF'
+# ===== Custom aliases =====
+alias ll='ls -alF'
+alias la='ls -A'
+alias l='ls -CF'
+alias cls='clear'
+alias grep='grep --color=auto'
+alias egrep='egrep --color=auto'
+alias fgrep='fgrep --color=auto'
+
+# ===== ccache helpers =====
+alias ccs='ccache -s'
+alias ccz='ccache -z'
+
+# ===== CMake helpers =====
+alias cb='cmake --build build'
+alias ct='ctest --test-dir build --output-on-failure'
+EOF
+
+RUN chown ${USERNAME}:${USERNAME} /home/${USERNAME}/.bashrc
+
 # 可选：强化 SSH 配置
 RUN sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config \
     && sed -i 's/#PubkeyAuthentication yes/PubkeyAuthentication yes/' /etc/ssh/sshd_config \
