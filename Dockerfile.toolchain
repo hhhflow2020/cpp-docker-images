@@ -1,0 +1,259 @@
+# syntax=docker/dockerfile:1.7
+
+# ============================================================
+# Unified C++ Toolchain / Dev / Runtime Images
+#
+# Targets:
+#   runtime-base
+#   runtime-debug-base
+#   builder-gcc
+#   dev-gcc
+#   dev-clang
+#
+# Suggested image tags:
+#   cpp-runtime-base:bookworm-v1
+#   cpp-runtime-debug-base:bookworm-v1
+#   cpp-builder-gcc:bookworm-v1
+#   cpp-dev-gcc:bookworm-v1
+#   cpp-dev-clang:bookworm-v1
+# ============================================================
+
+ARG DEBIAN_VERSION=bookworm
+ARG UV_VERSION=0.11.10
+ARG CONAN_VERSION=2.28.1
+ARG PYTHON_VERSION=3.12.0
+ARG USERNAME=dev
+ARG UID=1000
+ARG GID=1000
+
+FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv-bin
+# ============================================================
+# 1. os-base
+#    所有镜像共享的最小基础层
+# ============================================================
+FROM debian:${DEBIAN_VERSION}-slim AS os-base
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        tzdata \
+    && rm -rf /var/lib/apt/lists/*
+
+
+# ============================================================
+# 2. runtime-base
+#    生产运行基础镜像
+# ============================================================
+FROM os-base AS runtime-base
+
+ARG APP_HOME=/opt/app
+
+ENV APP_HOME=${APP_HOME} \
+    PATH="${APP_HOME}/bin:${PATH}" \
+    LD_LIBRARY_PATH="${APP_HOME}/lib"
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libstdc++6 \
+        libgcc-s1 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd --system app \
+    && useradd --system \
+        --gid app \
+        --home-dir ${APP_HOME} \
+        --shell /usr/sbin/nologin \
+        app \
+    && mkdir -p ${APP_HOME}/bin ${APP_HOME}/lib ${APP_HOME}/etc ${APP_HOME}/log \
+    && chown -R app:app ${APP_HOME}
+
+WORKDIR ${APP_HOME}
+
+USER app
+
+CMD ["/bin/sh"]
+
+
+# ============================================================
+# 3. runtime-debug-base
+#    Debug / 测试运行基础镜像
+# ============================================================
+FROM runtime-base AS runtime-debug-base
+
+USER root
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        gdb \
+        strace \
+        procps \
+        iproute2 \
+        netcat-openbsd \
+        curl \
+        file \
+        less \
+    && rm -rf /var/lib/apt/lists/*
+
+USER app
+
+CMD ["/bin/sh"]
+
+
+# ============================================================
+# 4. builder-base
+#    C++ 编译基础层
+# ============================================================
+FROM os-base AS builder-base
+
+ARG CONAN_VERSION
+ARG PYTHON_VERSION
+
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    CONAN_HOME=/root/.conan2 \
+    CCACHE_DIR=/root/.cache/ccache \
+    UV_CACHE_DIR=/opt/uv/cache \
+    UV_PYTHON_INSTALL_DIR=/opt/uv/python \
+    PATH="/opt/conan/bin:${PATH}"
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        gcc \
+        g++ \
+        cmake \
+        ninja-build \
+        make \
+        pkg-config \
+        git \
+        ccache \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=uv-bin /uv /uvx /bin/
+
+RUN mkdir -p /opt/uv/cache /opt/uv/python \
+    && uv python install "${PYTHON_VERSION}" \
+    && uv venv --python "${PYTHON_VERSION}" /opt/conan \
+    && uv pip install --python /opt/conan/bin/python --no-cache "conan==${CONAN_VERSION}" \
+    && chmod -R a+rX /opt/uv /opt/conan \
+    && conan --version \
+    && rm -rf /opt/uv/cache/*  # 清理 uv 缓存以减小镜像体积
+
+WORKDIR /workspace
+
+CMD ["/bin/bash"]
+
+
+# ============================================================
+# 5. builder-gcc
+#    CI/CD GCC 编译镜像
+# ============================================================
+FROM builder-base AS builder-gcc
+
+ENV CC=gcc \
+    CXX=g++
+
+RUN conan profile detect --force
+
+WORKDIR /workspace
+
+CMD ["/bin/bash"]
+
+
+# ============================================================
+# 6. dev-base
+#    开发镜像公共基础层
+# ============================================================
+FROM builder-base AS dev-base
+
+ARG USERNAME
+ARG UID
+ARG GID
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        valgrind \
+        strace \
+        procps \
+        iproute2 \
+        iputils-ping \
+        netcat-openbsd \
+        curl \
+        less \
+        vim \
+        bash-completion \
+        file \
+        tree \
+        unzip \
+        tar \
+        xz-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd -g ${GID} ${USERNAME} \
+    && useradd -m -u ${UID} -g ${GID} -s /bin/bash ${USERNAME} \
+    && mkdir -p /home/${USERNAME}/.conan2 \
+    && mkdir -p /home/${USERNAME}/.cache/ccache \
+    && chown -R ${USERNAME}:${USERNAME} /home/${USERNAME}
+
+ENV CONAN_HOME=/home/${USERNAME}/.conan2 \
+    CCACHE_DIR=/home/${USERNAME}/.cache/ccache
+
+USER ${USERNAME}
+
+WORKDIR /workspace
+
+CMD ["/bin/bash"]
+
+
+# ============================================================
+# 7. dev-gcc
+#    GCC 开发镜像
+# ============================================================
+FROM dev-base AS dev-gcc
+
+USER root
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        gdb \
+    && rm -rf /var/lib/apt/lists/*
+
+USER ${USERNAME}
+
+ENV CC=gcc \
+    CXX=g++
+
+# 在设置了环境变量后，生成普通用户的 GCC Conan Profile
+RUN conan profile detect --force
+
+WORKDIR /workspace
+
+CMD ["/bin/bash"]
+
+
+# ============================================================
+# 8. dev-clang
+#    Clang / LLVM 开发镜像
+# ============================================================
+FROM dev-base AS dev-clang
+
+USER root
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        clang \
+        clangd \
+        clang-format \
+        clang-tidy \
+        lld \
+        lldb \
+        gdb \
+    && rm -rf /var/lib/apt/lists/*
+
+USER ${USERNAME}
+
+ENV CC=clang \
+    CXX=clang++
+
+# 关键修复：此时环境变量 CC=clang 已经生效，Conan 会正确识别出 Clang 并生成对应的 Profile
+RUN conan profile detect --force
+
+WORKDIR /workspace
+
+CMD ["/bin/bash"]
