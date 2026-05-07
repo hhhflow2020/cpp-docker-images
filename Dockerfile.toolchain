@@ -135,6 +135,8 @@ RUN mkdir -p /opt/uv/cache /opt/uv/python \
     && uv venv --python "${PYTHON_VERSION}" /opt/conan \
     && uv pip install --python /opt/conan/bin/python --no-cache "conan==${CONAN_VERSION}" \
     && chmod -R a+rX /opt/uv /opt/conan \
+    && echo 'export PATH="/opt/conan/bin:$PATH"' > /etc/profile.d/conan.sh \
+    && chmod 0644 /etc/profile.d/conan.sh \
     && conan --version \
     && rm -rf /opt/uv/cache/*  # 清理 uv 缓存以减小镜像体积
 
