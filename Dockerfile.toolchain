@@ -185,22 +185,35 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         unzip \
         tar \
         xz-utils \
+        openssh-server \
+        sudo \
     && rm -rf /var/lib/apt/lists/*
 
 RUN groupadd -g ${GID} ${USERNAME} \
     && useradd -m -u ${UID} -g ${GID} -s /bin/bash ${USERNAME} \
     && mkdir -p /home/${USERNAME}/.conan2 \
     && mkdir -p /home/${USERNAME}/.cache/ccache \
-    && chown -R ${USERNAME}:${USERNAME} /home/${USERNAME}
+    && mkdir -p /home/${USERNAME}/.ssh \
+    && mkdir -p /workspace \
+    && mkdir -p /run/sshd \
+    && chown -R ${USERNAME}:${USERNAME} /home/${USERNAME} /workspace \
+    && chmod 700 /home/${USERNAME}/.ssh \
+    && echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/${USERNAME} \
+    && chmod 0440 /etc/sudoers.d/${USERNAME}
+
+# 可选：强化 SSH 配置
+RUN sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config \
+    && sed -i 's/#PubkeyAuthentication yes/PubkeyAuthentication yes/' /etc/ssh/sshd_config \
+    && sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin no/' /etc/ssh/sshd_config
 
 ENV CONAN_HOME=/home/${USERNAME}/.conan2 \
     CCACHE_DIR=/home/${USERNAME}/.cache/ccache
 
-USER ${USERNAME}
-
 WORKDIR /workspace
 
-CMD ["/bin/bash"]
+EXPOSE 22
+
+CMD ["/usr/sbin/sshd", "-D", "-e"]
 
 
 # ============================================================
@@ -222,10 +235,9 @@ ENV CC=gcc \
 
 # 在设置了环境变量后，生成普通用户的 GCC Conan Profile
 RUN conan profile detect --force
-
+USER root
 WORKDIR /workspace
-
-CMD ["/bin/bash"]
+CMD ["/usr/sbin/sshd", "-D", "-e"]
 
 
 # ============================================================
@@ -254,6 +266,6 @@ ENV CC=clang \
 # 关键修复：此时环境变量 CC=clang 已经生效，Conan 会正确识别出 Clang 并生成对应的 Profile
 RUN conan profile detect --force
 
+USER root
 WORKDIR /workspace
-
-CMD ["/bin/bash"]
+CMD ["/usr/sbin/sshd", "-D", "-e"]
