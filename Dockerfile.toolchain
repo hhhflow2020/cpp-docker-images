@@ -154,7 +154,14 @@ FROM builder-base AS builder-gcc
 ENV CC=gcc \
     CXX=g++
 
-RUN conan profile detect --force
+RUN conan profile detect --force \
+    && PROFILE="$(conan profile path default)" \
+    && if grep -q '^compiler.cppstd=' "$PROFILE"; then \
+        sed -i 's/^compiler.cppstd=.*/compiler.cppstd=gnu20/' "$PROFILE"; \
+    else \
+        sed -i '/^\[settings\]/a compiler.cppstd=gnu20' "$PROFILE"; \
+    fi \
+    && conan profile show -pr default
 
 WORKDIR /workspace
 
@@ -258,7 +265,15 @@ ENV CC=gcc \
     CXX=g++
 
 # 在设置了环境变量后，生成普通用户的 GCC Conan Profile
-RUN conan profile detect --force
+RUN conan profile detect --force \
+    && PROFILE="$(conan profile path default)" \
+    && if grep -q '^compiler.cppstd=' "$PROFILE"; then \
+        sed -i 's/^compiler.cppstd=.*/compiler.cppstd=gnu20/' "$PROFILE"; \
+    else \
+        sed -i '/^\[settings\]/a compiler.cppstd=gnu20' "$PROFILE"; \
+    fi \
+    && conan profile show -pr default
+
 USER root
 WORKDIR /workspace
 CMD ["/usr/sbin/sshd", "-D", "-e"]
@@ -288,7 +303,14 @@ ENV CC=clang \
     CXX=clang++
 
 # 关键修复：此时环境变量 CC=clang 已经生效，Conan 会正确识别出 Clang 并生成对应的 Profile
-RUN conan profile detect --force
+RUN conan profile detect --force \
+    && PROFILE="$(conan profile path default)" \
+    && if grep -q '^compiler.cppstd=' "$PROFILE"; then \
+        sed -i 's/^compiler.cppstd=.*/compiler.cppstd=gnu20/' "$PROFILE"; \
+    else \
+        sed -i '/^\[settings\]/a compiler.cppstd=gnu20' "$PROFILE"; \
+    fi \
+    && conan profile show -pr default
 
 USER root
 WORKDIR /workspace
