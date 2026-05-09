@@ -272,7 +272,9 @@ RUN conan profile detect --force \
     else \
         sed -i '/^\[settings\]/a compiler.cppstd=gnu20' "$PROFILE"; \
     fi \
-    && conan profile show -pr default
+    && conan profile show -pr default \
+    && echo 'export CC=/usr/bin/gcc' >> /home/${USERNAME}/.bashrc \
+    && echo 'export CXX=/usr/bin/g++' >> /home/${USERNAME}/.bashrc
 
 USER root
 WORKDIR /workspace
@@ -310,7 +312,9 @@ RUN conan profile detect --force \
     else \
         sed -i '/^\[settings\]/a compiler.cppstd=gnu20' "$PROFILE"; \
     fi \
-    && conan profile show -pr default
+    && conan profile show -pr default \
+    && echo 'export CC=/usr/bin/clang' >> /home/${USERNAME}/.bashrc \
+    && echo 'export CXX=/usr/bin/clang++' >> /home/${USERNAME}/.bashrc
 
 USER root
 WORKDIR /workspace
