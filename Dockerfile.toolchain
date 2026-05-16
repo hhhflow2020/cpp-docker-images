@@ -299,6 +299,13 @@ if [ -f "$HOME/.dev-shellrc" ]; then
 fi
 EOF
 
+RUN cat >> /root/.bashrc <<EOF
+
+if [ -f "/home/${USERNAME}/.dev-shellrc" ]; then
+    . "/home/${USERNAME}/.dev-shellrc"
+fi
+EOF
+
 RUN cat > /home/${USERNAME}/.bash_profile <<'EOF'
 if [ -f "$HOME/.bashrc" ]; then
     . "$HOME/.bashrc"
