@@ -57,7 +57,6 @@ LABEL org.opencontainers.image.title="C++ toolchain images" \
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
-        tzdata \
     && rm -rf \
         /var/lib/apt/lists/* \
         /usr/share/doc/* \
@@ -125,7 +124,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         iproute2 \
         netcat-openbsd \
         curl \
-        file \
         less \
     && rm -rf \
         /var/lib/apt/lists/* \
@@ -282,10 +280,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         netcat-openbsd \
         curl \
         less \
-        vim \
-        bash-completion \
-        file \
-        tree \
+        vim-tiny \
         unzip \
         tar \
         xz-utils \
@@ -467,7 +462,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         clang-format \
         clang-tidy \
         lld \
-        lldb \
         gdb \
     && rm -rf \
         /var/lib/apt/lists/* \

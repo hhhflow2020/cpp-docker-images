@@ -44,6 +44,8 @@ Use `runtime-debug-base` when you need `/bin/sh`, `gdb`, `strace`, `curl`, or ot
 
 ## Development Images
 
+The development images keep the default toolset lean. They include core build/debug tooling, but omit low-frequency convenience packages such as full Vim runtime, bash completion, `tree`, `file`, `tzdata`, and `lldb`. Add these in a downstream image when a project needs them.
+
 The dev images start `sshd` by default:
 
 ```bash
