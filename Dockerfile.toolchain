@@ -273,7 +273,7 @@ RUN groupadd -g ${GID} ${USERNAME} \
     && chmod 0440 /etc/sudoers.d/${USERNAME}
 
 
-RUN cat >> /home/${USERNAME}/.bashrc <<'EOF'
+RUN cat > /home/${USERNAME}/.dev-shellrc <<'EOF'
 # ===== Custom aliases =====
 alias ll='ls -alF'
 alias la='ls -A'
@@ -292,7 +292,30 @@ alias cb='cmake --build build'
 alias ct='ctest --test-dir build --output-on-failure'
 EOF
 
-RUN chown ${USERNAME}:${USERNAME} /home/${USERNAME}/.bashrc
+RUN cat >> /home/${USERNAME}/.bashrc <<'EOF'
+
+if [ -f "$HOME/.dev-shellrc" ]; then
+    . "$HOME/.dev-shellrc"
+fi
+EOF
+
+RUN cat > /home/${USERNAME}/.bash_profile <<'EOF'
+if [ -f "$HOME/.bashrc" ]; then
+    . "$HOME/.bashrc"
+fi
+EOF
+
+RUN cat > /home/${USERNAME}/.profile <<'EOF'
+if [ "$BASH" ] && [ -f "$HOME/.bashrc" ]; then
+    . "$HOME/.bashrc"
+fi
+EOF
+
+RUN chown ${USERNAME}:${USERNAME} \
+        /home/${USERNAME}/.dev-shellrc \
+        /home/${USERNAME}/.bashrc \
+        /home/${USERNAME}/.bash_profile \
+        /home/${USERNAME}/.profile
 
 RUN mkdir -p /etc/ssh/sshd_config.d \
     && { \
