@@ -22,6 +22,7 @@
 
 ARG DEBIAN_VERSION=bookworm
 ARG DEBIAN_FRONTEND=noninteractive
+ARG RUNTIME_BASE_IMAGE=gcr.io/distroless/cc-debian12:nonroot
 ARG UV_VERSION=0.11.10
 ARG CONAN_VERSION=2.28.1
 ARG PYTHON_VERSION=3.12.0
@@ -57,14 +58,46 @@ LABEL org.opencontainers.image.title="C++ toolchain images" \
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         tzdata \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf \
+        /var/lib/apt/lists/* \
+        /usr/share/doc/* \
+        /usr/share/man/* \
+        /usr/share/info/* \
+        /usr/share/lintian/* \
+        /var/cache/debconf/*-old
 
 
 # ============================================================
 # 2. runtime-base
 #    生产运行基础镜像
 # ============================================================
-FROM os-base AS runtime-base
+FROM os-base AS runtime-layout
+
+ARG APP_HOME=/opt/app
+ARG DEBIAN_FRONTEND
+
+RUN mkdir -p ${APP_HOME}/bin ${APP_HOME}/lib ${APP_HOME}/etc ${APP_HOME}/log
+
+FROM ${RUNTIME_BASE_IMAGE} AS runtime-base
+
+ARG APP_HOME=/opt/app
+
+ENV APP_HOME=${APP_HOME} \
+    PATH="${APP_HOME}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+    LD_LIBRARY_PATH="${APP_HOME}/lib"
+
+COPY --from=runtime-layout --chown=65532:65532 ${APP_HOME} ${APP_HOME}
+
+WORKDIR ${APP_HOME}
+
+USER 65532:65532
+
+
+# ============================================================
+# 3. runtime-debug-base
+#    Debug / 测试运行基础镜像
+# ============================================================
+FROM os-base AS runtime-debug-base
 
 ARG APP_HOME=/opt/app
 ARG DEBIAN_FRONTEND
@@ -73,13 +106,9 @@ ENV APP_HOME=${APP_HOME} \
     PATH="${APP_HOME}/bin:${PATH}" \
     LD_LIBRARY_PATH="${APP_HOME}/lib"
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        libstdc++6 \
-        libgcc-s1 \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN groupadd --system app \
-    && useradd --system \
+RUN groupadd -g 65532 app \
+    && useradd \
+        --uid 65532 \
         --gid app \
         --home-dir ${APP_HOME} \
         --shell /usr/sbin/nologin \
@@ -87,24 +116,9 @@ RUN groupadd --system app \
     && mkdir -p ${APP_HOME}/bin ${APP_HOME}/lib ${APP_HOME}/etc ${APP_HOME}/log \
     && chown -R app:app ${APP_HOME}
 
-WORKDIR ${APP_HOME}
-
-USER app
-
-CMD ["/bin/sh"]
-
-
-# ============================================================
-# 3. runtime-debug-base
-#    Debug / 测试运行基础镜像
-# ============================================================
-FROM runtime-base AS runtime-debug-base
-
-ARG DEBIAN_FRONTEND
-
-USER root
-
 RUN apt-get update && apt-get install -y --no-install-recommends \
+        libstdc++6 \
+        libgcc-s1 \
         gdb \
         strace \
         procps \
@@ -113,9 +127,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
         file \
         less \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf \
+        /var/lib/apt/lists/* \
+        /usr/share/doc/* \
+        /usr/share/man/* \
+        /usr/share/info/* \
+        /usr/share/lintian/* \
+        /var/cache/debconf/*-old
 
 USER app
+
+WORKDIR ${APP_HOME}
 
 CMD ["/bin/sh"]
 
@@ -147,7 +169,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         pkg-config \
         git \
         ccache \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf \
+        /var/lib/apt/lists/* \
+        /usr/share/doc/* \
+        /usr/share/man/* \
+        /usr/share/info/* \
+        /usr/share/lintian/* \
+        /var/cache/debconf/*-old
 
 COPY --from=uv-bin /uv /uvx /bin/
 
@@ -160,6 +188,8 @@ RUN mkdir -p /opt/uv/cache /opt/uv/python \
     && chmod 0644 /etc/profile.d/conan.sh \
     && ln -sf /opt/conan/bin/conan /usr/local/bin/conan \
     && conan --version \
+    && find /opt/uv /opt/conan -type d -name __pycache__ -prune -exec rm -rf {} + \
+    && find /opt/uv /opt/conan -type f -name '*.pyc' -delete \
     && rm -rf /opt/uv/cache/*  # 清理 uv 缓存以减小镜像体积
 
 RUN cat > /usr/local/bin/conan-detect-gnu20-profile <<'EOF'
@@ -214,7 +244,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         clang-format \
         clang-tidy \
         lld \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf \
+        /var/lib/apt/lists/* \
+        /usr/share/doc/* \
+        /usr/share/man/* \
+        /usr/share/info/* \
+        /usr/share/lintian/* \
+        /var/cache/debconf/*-old
 
 ENV CC=clang \
     CXX=clang++
@@ -255,7 +291,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         xz-utils \
         openssh-server \
         sudo \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf \
+        /var/lib/apt/lists/* \
+        /usr/share/doc/* \
+        /usr/share/man/* \
+        /usr/share/info/* \
+        /usr/share/lintian/* \
+        /var/cache/debconf/*-old
 
 RUN groupadd -g ${GID} ${USERNAME} \
     && useradd -m -u ${UID} -g ${GID} -s /bin/bash ${USERNAME} \
@@ -381,7 +423,13 @@ USER root
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         gdb \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf \
+        /var/lib/apt/lists/* \
+        /usr/share/doc/* \
+        /usr/share/man/* \
+        /usr/share/info/* \
+        /usr/share/lintian/* \
+        /var/cache/debconf/*-old
 
 USER ${USERNAME}
 
@@ -421,7 +469,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         lld \
         lldb \
         gdb \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf \
+        /var/lib/apt/lists/* \
+        /usr/share/doc/* \
+        /usr/share/man/* \
+        /usr/share/info/* \
+        /usr/share/lintian/* \
+        /var/cache/debconf/*-old
 
 USER ${USERNAME}
 
