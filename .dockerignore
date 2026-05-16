@@ -1,0 +1,10 @@
+.git
+.gitignore
+.github
+.DS_Store
+
+**/build
+**/cmake-build-*
+**/.cache
+**/*.log
+**/*.tmp

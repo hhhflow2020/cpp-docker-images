@@ -7,6 +7,7 @@
 #   runtime-base
 #   runtime-debug-base
 #   builder-gcc
+#   builder-clang
 #   dev-gcc
 #   dev-clang
 #
@@ -14,17 +15,22 @@
 #   cpp-runtime-base:bookworm-v1
 #   cpp-runtime-debug-base:bookworm-v1
 #   cpp-builder-gcc:bookworm-v1
+#   cpp-builder-clang:bookworm-v1
 #   cpp-dev-gcc:bookworm-v1
 #   cpp-dev-clang:bookworm-v1
 # ============================================================
 
 ARG DEBIAN_VERSION=bookworm
+ARG DEBIAN_FRONTEND=noninteractive
 ARG UV_VERSION=0.11.10
 ARG CONAN_VERSION=2.28.1
 ARG PYTHON_VERSION=3.12.0
 ARG USERNAME=dev
 ARG UID=1000
 ARG GID=1000
+ARG IMAGE_SOURCE=unknown
+ARG IMAGE_REVISION=unknown
+ARG IMAGE_VERSION=dev
 
 FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv-bin
 # ============================================================
@@ -33,9 +39,20 @@ FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv-bin
 # ============================================================
 FROM debian:${DEBIAN_VERSION}-slim AS os-base
 
-ENV DEBIAN_FRONTEND=noninteractive \
-    LANG=C.UTF-8 \
+ARG DEBIAN_FRONTEND
+ARG IMAGE_SOURCE
+ARG IMAGE_REVISION
+ARG IMAGE_VERSION
+
+ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8
+
+LABEL org.opencontainers.image.title="C++ toolchain images" \
+      org.opencontainers.image.description="Shared C++ runtime, builder, and development images" \
+      org.opencontainers.image.source="${IMAGE_SOURCE}" \
+      org.opencontainers.image.revision="${IMAGE_REVISION}" \
+      org.opencontainers.image.version="${IMAGE_VERSION}" \
+      org.opencontainers.image.licenses="NOASSERTION"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
@@ -50,6 +67,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 FROM os-base AS runtime-base
 
 ARG APP_HOME=/opt/app
+ARG DEBIAN_FRONTEND
 
 ENV APP_HOME=${APP_HOME} \
     PATH="${APP_HOME}/bin:${PATH}" \
@@ -82,6 +100,8 @@ CMD ["/bin/sh"]
 # ============================================================
 FROM runtime-base AS runtime-debug-base
 
+ARG DEBIAN_FRONTEND
+
 USER root
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -106,6 +126,7 @@ CMD ["/bin/sh"]
 # ============================================================
 FROM os-base AS builder-base
 
+ARG DEBIAN_FRONTEND
 ARG CONAN_VERSION
 ARG PYTHON_VERSION
 
@@ -137,8 +158,27 @@ RUN mkdir -p /opt/uv/cache /opt/uv/python \
     && chmod -R a+rX /opt/uv /opt/conan \
     && echo 'export PATH="/opt/conan/bin:$PATH"' > /etc/profile.d/conan.sh \
     && chmod 0644 /etc/profile.d/conan.sh \
+    && ln -sf /opt/conan/bin/conan /usr/local/bin/conan \
     && conan --version \
     && rm -rf /opt/uv/cache/*  # 清理 uv 缓存以减小镜像体积
+
+RUN cat > /usr/local/bin/conan-detect-gnu20-profile <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+conan profile detect --force
+profile="$(conan profile path default)"
+
+if grep -q '^compiler.cppstd=' "${profile}"; then
+    sed -i 's/^compiler.cppstd=.*/compiler.cppstd=gnu20/' "${profile}"
+else
+    sed -i '/^\[settings\]/a compiler.cppstd=gnu20' "${profile}"
+fi
+
+conan profile show -pr default
+EOF
+
+RUN chmod 0755 /usr/local/bin/conan-detect-gnu20-profile
 
 WORKDIR /workspace
 
@@ -154,14 +194,7 @@ FROM builder-base AS builder-gcc
 ENV CC=gcc \
     CXX=g++
 
-RUN conan profile detect --force \
-    && PROFILE="$(conan profile path default)" \
-    && if grep -q '^compiler.cppstd=' "$PROFILE"; then \
-        sed -i 's/^compiler.cppstd=.*/compiler.cppstd=gnu20/' "$PROFILE"; \
-    else \
-        sed -i '/^\[settings\]/a compiler.cppstd=gnu20' "$PROFILE"; \
-    fi \
-    && conan profile show -pr default
+RUN conan-detect-gnu20-profile
 
 WORKDIR /workspace
 
@@ -169,11 +202,37 @@ CMD ["/bin/bash"]
 
 
 # ============================================================
-# 6. dev-base
+# 6. builder-clang
+#    CI/CD Clang 编译镜像
+# ============================================================
+FROM builder-base AS builder-clang
+
+ARG DEBIAN_FRONTEND
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        clang \
+        clang-format \
+        clang-tidy \
+        lld \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV CC=clang \
+    CXX=clang++
+
+RUN conan-detect-gnu20-profile
+
+WORKDIR /workspace
+
+CMD ["/bin/bash"]
+
+
+# ============================================================
+# 7. dev-base
 #    开发镜像公共基础层
 # ============================================================
 FROM builder-base AS dev-base
 
+ARG DEBIAN_FRONTEND
 ARG USERNAME
 ARG UID
 ARG GID
@@ -202,6 +261,9 @@ RUN groupadd -g ${GID} ${USERNAME} \
     && useradd -m -u ${UID} -g ${GID} -s /bin/bash ${USERNAME} \
     && mkdir -p /home/${USERNAME}/.conan2 \
     && mkdir -p /home/${USERNAME}/.cache/ccache \
+    && mkdir -p /home/${USERNAME}/.cache/uv \
+    && mkdir -p /home/${USERNAME}/.local/bin \
+    && mkdir -p /home/${USERNAME}/.local/share/uv/python \
     && mkdir -p /home/${USERNAME}/.ssh \
     && mkdir -p /workspace \
     && mkdir -p /run/sshd \
@@ -232,26 +294,58 @@ EOF
 
 RUN chown ${USERNAME}:${USERNAME} /home/${USERNAME}/.bashrc
 
-# 可选：强化 SSH 配置
-RUN sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config \
-    && sed -i 's/#PubkeyAuthentication yes/PubkeyAuthentication yes/' /etc/ssh/sshd_config \
-    && sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin no/' /etc/ssh/sshd_config
+RUN mkdir -p /etc/ssh/sshd_config.d \
+    && { \
+        echo 'PasswordAuthentication no'; \
+        echo 'PubkeyAuthentication yes'; \
+        echo 'PermitRootLogin no'; \
+    } > /etc/ssh/sshd_config.d/20-dev-container.conf
 
-ENV CONAN_HOME=/home/${USERNAME}/.conan2 \
-    CCACHE_DIR=/home/${USERNAME}/.cache/ccache
+ENV DEV_USERNAME=${USERNAME} \
+    CONAN_HOME=/home/${USERNAME}/.conan2 \
+    CCACHE_DIR=/home/${USERNAME}/.cache/ccache \
+    UV_CACHE_DIR=/home/${USERNAME}/.cache/uv \
+    UV_PYTHON_INSTALL_DIR=/home/${USERNAME}/.local/share/uv/python \
+    PATH="/home/${USERNAME}/.local/bin:${PATH}"
+
+RUN cat > /usr/local/bin/dev-container-entrypoint <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $# -eq 0 ]]; then
+    set -- /usr/sbin/sshd -D -e
+fi
+
+if [[ "${1}" == "sshd" || "${1}" == "/usr/sbin/sshd" ]]; then
+    exec /usr/sbin/sshd "${@:2}"
+fi
+
+if [[ "$(id -u)" == "0" ]]; then
+    exec sudo -E -H -u "${DEV_USERNAME:-dev}" -- "$@"
+fi
+
+exec "$@"
+EOF
+
+RUN chmod 0755 /usr/local/bin/dev-container-entrypoint
 
 WORKDIR /workspace
 
 EXPOSE 22
 
+ENTRYPOINT ["/usr/local/bin/dev-container-entrypoint"]
+
 CMD ["/usr/sbin/sshd", "-D", "-e"]
 
 
 # ============================================================
-# 7. dev-gcc
+# 8. dev-gcc
 #    GCC 开发镜像
 # ============================================================
 FROM dev-base AS dev-gcc
+
+ARG DEBIAN_FRONTEND
+ARG USERNAME
 
 USER root
 
@@ -261,31 +355,31 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 USER ${USERNAME}
 
-ENV CC=gcc \
-    CXX=g++
+ENV CC=/usr/bin/gcc \
+    CXX=/usr/bin/g++
 
 # 在设置了环境变量后，生成普通用户的 GCC Conan Profile
-RUN conan profile detect --force \
-    && PROFILE="$(conan profile path default)" \
-    && if grep -q '^compiler.cppstd=' "$PROFILE"; then \
-        sed -i 's/^compiler.cppstd=.*/compiler.cppstd=gnu20/' "$PROFILE"; \
-    else \
-        sed -i '/^\[settings\]/a compiler.cppstd=gnu20' "$PROFILE"; \
-    fi \
-    && conan profile show -pr default \
+RUN conan-detect-gnu20-profile \
     && echo 'export CC=/usr/bin/gcc' >> /home/${USERNAME}/.bashrc \
     && echo 'export CXX=/usr/bin/g++' >> /home/${USERNAME}/.bashrc
 
 USER root
+RUN printf '%s\n' \
+        "SetEnv CC=/usr/bin/gcc CXX=/usr/bin/g++ CONAN_HOME=/home/${USERNAME}/.conan2 CCACHE_DIR=/home/${USERNAME}/.cache/ccache UV_CACHE_DIR=/home/${USERNAME}/.cache/uv UV_PYTHON_INSTALL_DIR=/home/${USERNAME}/.local/share/uv/python" \
+        > /etc/ssh/sshd_config.d/30-toolchain-env.conf
+
 WORKDIR /workspace
 CMD ["/usr/sbin/sshd", "-D", "-e"]
 
 
 # ============================================================
-# 8. dev-clang
+# 9. dev-clang
 #    Clang / LLVM 开发镜像
 # ============================================================
 FROM dev-base AS dev-clang
+
+ARG DEBIAN_FRONTEND
+ARG USERNAME
 
 USER root
 
@@ -301,21 +395,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 USER ${USERNAME}
 
-ENV CC=clang \
-    CXX=clang++
+ENV CC=/usr/bin/clang \
+    CXX=/usr/bin/clang++
 
 # 关键修复：此时环境变量 CC=clang 已经生效，Conan 会正确识别出 Clang 并生成对应的 Profile
-RUN conan profile detect --force \
-    && PROFILE="$(conan profile path default)" \
-    && if grep -q '^compiler.cppstd=' "$PROFILE"; then \
-        sed -i 's/^compiler.cppstd=.*/compiler.cppstd=gnu20/' "$PROFILE"; \
-    else \
-        sed -i '/^\[settings\]/a compiler.cppstd=gnu20' "$PROFILE"; \
-    fi \
-    && conan profile show -pr default \
+RUN conan-detect-gnu20-profile \
     && echo 'export CC=/usr/bin/clang' >> /home/${USERNAME}/.bashrc \
     && echo 'export CXX=/usr/bin/clang++' >> /home/${USERNAME}/.bashrc
 
 USER root
+RUN printf '%s\n' \
+        "SetEnv CC=/usr/bin/clang CXX=/usr/bin/clang++ CONAN_HOME=/home/${USERNAME}/.conan2 CCACHE_DIR=/home/${USERNAME}/.cache/ccache UV_CACHE_DIR=/home/${USERNAME}/.cache/uv UV_PYTHON_INSTALL_DIR=/home/${USERNAME}/.local/share/uv/python" \
+        > /etc/ssh/sshd_config.d/30-toolchain-env.conf
+
 WORKDIR /workspace
 CMD ["/usr/sbin/sshd", "-D", "-e"]
