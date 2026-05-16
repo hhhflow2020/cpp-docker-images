@@ -312,9 +312,9 @@ RUN groupadd -g ${GID} ${USERNAME} \
 
 RUN cat > /home/${USERNAME}/.dev-shellrc <<'EOF'
 # ===== Custom aliases =====
-alias ll='ls -alF'
-alias la='ls -A'
-alias l='ls -CF'
+alias ll='ls --color=auto -alF'
+alias la='ls --color=auto -A'
+alias l='ls --color=auto -CF'
 alias cls='clear'
 alias grep='grep --color=auto'
 alias egrep='egrep --color=auto'
