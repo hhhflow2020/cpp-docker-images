@@ -6,7 +6,7 @@ This repository builds shared C++ runtime, builder, and development images on De
 
 | Target | Image | Purpose |
 | --- | --- | --- |
-| `runtime-base` | `cpp-runtime-base` | Minimal distroless non-root runtime base for C++ services. |
+| `runtime-base` | `cpp-runtime-base` | Minimal Debian non-root runtime base for C++ services. |
 | `runtime-debug-base` | `cpp-runtime-debug-base` | Debian runtime with shell plus debugging/network tools. |
 | `builder-gcc` | `cpp-builder-gcc` | GCC CI builder with CMake, Ninja, ccache, Python, and Conan. |
 | `builder-clang` | `cpp-builder-clang` | Clang CI builder with CMake, Ninja, ccache, Python, and Conan. |
@@ -27,7 +27,6 @@ Common overrides:
 VERSION=bookworm-v1.0.6 PULL=true ./build-toolchain-images.sh
 PLATFORM=linux/amd64 VERSION=bookworm-v1.0.6 ./build-toolchain-images.sh
 DEBIAN_VERSION=bookworm PYTHON_VERSION=3.12.0 ./build-toolchain-images.sh
-RUNTIME_BASE_IMAGE=gcr.io/distroless/cc-debian12:nonroot ./build-toolchain-images.sh
 ```
 
 Build one target directly:
@@ -38,7 +37,7 @@ docker build -f Dockerfile.toolchain --target builder-gcc -t cpp-builder-gcc:loc
 
 ## Runtime Images
 
-`runtime-base` is distroless and does not include a shell or package manager. Downstream application images should copy their binary and set an explicit `ENTRYPOINT` or `CMD`.
+`runtime-base` is built from the same Debian slim base as the builder images and installs Debian's `libstdc++6` and `libgcc-s1`, so standard C/C++ runtime libraries come from the same distribution source as the build toolchain.
 
 Use `runtime-debug-base` when you need `/bin/sh`, `gdb`, `strace`, `curl`, or other debugging tools.
 
