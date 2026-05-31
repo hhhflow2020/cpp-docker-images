@@ -25,6 +25,8 @@ ARG DEBIAN_FRONTEND=noninteractive
 ARG UV_VERSION=0.11.10
 ARG CONAN_VERSION=2.28.1
 ARG PYTHON_VERSION=3.12.0
+ARG GCC_VERSION=12
+ARG LLVM_VERSION=14
 ARG USERNAME=dev
 ARG UID=1000
 ARG GID=1000
@@ -148,6 +150,7 @@ FROM os-base AS builder-base
 ARG DEBIAN_FRONTEND
 ARG CONAN_VERSION
 ARG PYTHON_VERSION
+ARG GCC_VERSION
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     CONAN_HOME=/root/.conan2 \
@@ -160,6 +163,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         gcc \
         g++ \
+        libgcc-${GCC_VERSION}-dev \
         cmake \
         ninja-build \
         make \
@@ -235,12 +239,14 @@ CMD ["/bin/bash"]
 FROM builder-base AS builder-clang
 
 ARG DEBIAN_FRONTEND
+ARG LLVM_VERSION
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         clang \
         clang-format \
         clang-tidy \
         lld \
+        libclang-rt-${LLVM_VERSION}-dev \
     && rm -rf \
         /var/lib/apt/lists/* \
         /usr/share/doc/* \
@@ -452,6 +458,7 @@ FROM dev-base AS dev-clang
 
 ARG DEBIAN_FRONTEND
 ARG USERNAME
+ARG LLVM_VERSION
 
 USER root
 
@@ -461,6 +468,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         clang-format \
         clang-tidy \
         lld \
+        libclang-rt-${LLVM_VERSION}-dev \
         gdb \
     && rm -rf \
         /var/lib/apt/lists/* \
