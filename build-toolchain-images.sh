@@ -13,6 +13,9 @@ docker build -f "${DOCKERFILE}" --target runtime-debug-base \
 docker build -f "${DOCKERFILE}" --target builder-gcc \
   -t "cpp-builder-gcc:${VERSION}" .
 
+docker build -f "${DOCKERFILE}" --target builder-clang \
+  -t "cpp-builder-clang:${VERSION}" .
+
 docker build -f "${DOCKERFILE}" --target dev-gcc \
   -t "cpp-dev-gcc:${VERSION}" .
 

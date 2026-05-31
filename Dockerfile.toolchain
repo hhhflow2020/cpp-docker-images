@@ -7,6 +7,7 @@
 #   runtime-base
 #   runtime-debug-base
 #   builder-gcc
+#   builder-clang
 #   dev-gcc
 #   dev-clang
 #
@@ -14,6 +15,7 @@
 #   cpp-runtime-base:bookworm-v1
 #   cpp-runtime-debug-base:bookworm-v1
 #   cpp-builder-gcc:bookworm-v1
+#   cpp-builder-clang:bookworm-v1
 #   cpp-dev-gcc:bookworm-v1
 #   cpp-dev-clang:bookworm-v1
 # ============================================================
@@ -22,6 +24,8 @@ ARG DEBIAN_VERSION=bookworm
 ARG UV_VERSION=0.11.10
 ARG CONAN_VERSION=2.28.1
 ARG PYTHON_VERSION=3.12.0
+ARG GCC_VERSION=12
+ARG LLVM_VERSION=14
 ARG USERNAME=dev
 ARG UID=1000
 ARG GID=1000
@@ -108,6 +112,7 @@ FROM os-base AS builder-base
 
 ARG CONAN_VERSION
 ARG PYTHON_VERSION
+ARG GCC_VERSION
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     CONAN_HOME=/root/.conan2 \
@@ -120,6 +125,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         gcc \
         g++ \
+        libgcc-${GCC_VERSION}-dev \
         cmake \
         ninja-build \
         make \
@@ -169,7 +175,40 @@ CMD ["/bin/bash"]
 
 
 # ============================================================
-# 6. dev-base
+# 6. builder-clang
+#    CI/CD Clang 编译镜像
+# ============================================================
+FROM builder-base AS builder-clang
+
+ARG LLVM_VERSION
+
+USER root
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        clang \
+        lld \
+        libclang-rt-${LLVM_VERSION}-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV CC=clang \
+    CXX=clang++
+
+RUN conan profile detect --force \
+    && PROFILE="$(conan profile path default)" \
+    && if grep -q '^compiler.cppstd=' "$PROFILE"; then \
+        sed -i 's/^compiler.cppstd=.*/compiler.cppstd=gnu20/' "$PROFILE"; \
+    else \
+        sed -i '/^\[settings\]/a compiler.cppstd=gnu20' "$PROFILE"; \
+    fi \
+    && conan profile show -pr default
+
+WORKDIR /workspace
+
+CMD ["/bin/bash"]
+
+
+# ============================================================
+# 7. dev-base
 #    开发镜像公共基础层
 # ============================================================
 FROM builder-base AS dev-base
@@ -248,7 +287,7 @@ CMD ["/usr/sbin/sshd", "-D", "-e"]
 
 
 # ============================================================
-# 7. dev-gcc
+# 8. dev-gcc
 #    GCC 开发镜像
 # ============================================================
 FROM dev-base AS dev-gcc
@@ -282,10 +321,12 @@ CMD ["/usr/sbin/sshd", "-D", "-e"]
 
 
 # ============================================================
-# 8. dev-clang
+# 9. dev-clang
 #    Clang / LLVM 开发镜像
 # ============================================================
 FROM dev-base AS dev-clang
+
+ARG LLVM_VERSION
 
 USER root
 
@@ -296,6 +337,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         clang-tidy \
         lld \
         lldb \
+        libclang-rt-${LLVM_VERSION}-dev \
         gdb \
     && rm -rf /var/lib/apt/lists/*
 
