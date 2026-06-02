@@ -24,6 +24,13 @@ env:
   UV_VERSION: 0.11.10
   CONAN_VERSION: 2.28.1
   PYTHON_VERSION: 3.12.0
+  GCC_VERSION: 12
+  LLVM_VERSION: 14
+  DEV_USERNAME: dev
+  DEV_UID: 1000
+  DEV_GID: 1000
+  APP_UID: 65532
+  APP_GID: 65532
 
 jobs:
   release-images:
@@ -132,6 +139,13 @@ jobs:
             UV_VERSION=${{ env.UV_VERSION }}
             CONAN_VERSION=${{ env.CONAN_VERSION }}
             PYTHON_VERSION=${{ env.PYTHON_VERSION }}
+            GCC_VERSION=${{ env.GCC_VERSION }}
+            LLVM_VERSION=${{ env.LLVM_VERSION }}
+            USERNAME=${{ env.DEV_USERNAME }}
+            UID=${{ env.DEV_UID }}
+            GID=${{ env.DEV_GID }}
+            APP_UID=${{ env.APP_UID }}
+            APP_GID=${{ env.APP_GID }}
             IMAGE_SOURCE=https://github.com/${{ github.repository }}
             IMAGE_REVISION=${{ github.sha }}
             IMAGE_VERSION=${{ env.IMAGE_VERSION }}

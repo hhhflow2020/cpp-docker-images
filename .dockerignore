@@ -1,10 +1,16 @@
 .git
 .gitignore
 .github
+.agents
+.codex
 .DS_Store
+.idea
+.vscode
 
 **/build
 **/cmake-build-*
 **/.cache
+**/node_modules
+**/dist
 **/*.log
 **/*.tmp

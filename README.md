@@ -27,6 +27,7 @@ Common overrides:
 VERSION=bookworm-v1.0.6 PULL=true ./build-toolchain-images.sh
 PLATFORM=linux/amd64 VERSION=bookworm-v1.0.6 ./build-toolchain-images.sh
 DEBIAN_VERSION=bookworm PYTHON_VERSION=3.12.0 ./build-toolchain-images.sh
+TARGETS=builder-clang,dev-clang VERSION=local ./build-toolchain-images.sh
 ```
 
 Build one target directly:
@@ -39,11 +40,17 @@ docker build -f Dockerfile.toolchain --target builder-gcc -t cpp-builder-gcc:loc
 
 `runtime-base` is built from the same Debian slim base as the builder images and installs Debian's `libstdc++6` and `libgcc-s1`, so standard C/C++ runtime libraries come from the same distribution source as the build toolchain.
 
+Runtime images run as UID/GID `65532` by default. Override `APP_UID` and `APP_GID` at build time when a project needs a different fixed runtime identity.
+
 Use `runtime-debug-base` when you need `/bin/sh`, `gdb`, `strace`, `curl`, or other debugging tools.
+
+Sanitizer runtime libraries are intentionally installed in builder and dev images. `runtime-base` stays minimal; only add sanitizer shared libraries to a downstream runtime image when a dynamically linked sanitizer binary actually needs them.
 
 ## Development Images
 
-The development images keep the default toolset lean. They include core build/debug tooling, but omit low-frequency convenience packages such as full Vim runtime, bash completion, `tree`, `file`, `tzdata`, and `lldb`. Add these in a downstream image when a project needs them.
+The development images keep the default toolset lean. They include core build/debug tooling, but omit low-frequency or heavy convenience packages such as Valgrind, full Vim runtime, bash completion, `tree`, `file`, `tzdata`, and `lldb`. Add these in a downstream image when a project needs them.
+
+Builder and dev images use `uv` for the Python runtime that hosts Conan. The `uv` and `uvx` binaries are also available in the image for project-level Python tooling.
 
 The dev images start `sshd` by default:
 
@@ -64,6 +71,21 @@ When a command is provided instead of the default `sshd` command, the entrypoint
 
 ```bash
 docker run --rm cpp-dev-gcc:bookworm-v1 bash -lc 'id && conan --version'
+```
+
+For Linux bind mounts, either build the dev image with matching IDs or set them at runtime:
+
+```bash
+DEV_UID="$(id -u)" DEV_GID="$(id -g)" TARGETS=dev-gcc VERSION=local ./build-toolchain-images.sh
+docker run --rm -e DEV_UID="$(id -u)" -e DEV_GID="$(id -g)" -v "$PWD:/workspace" cpp-dev-gcc:bookworm-v1 bash -lc 'touch /workspace/.write-test'
+```
+
+You can provide an SSH public key through an environment variable instead of copying files after startup:
+
+```bash
+docker run -d --name cpp-dev-gcc -p 2222:22 \
+  -e DEV_AUTHORIZED_KEYS="$(cat ~/.ssh/id_ed25519.pub)" \
+  cpp-dev-gcc:bookworm-v1
 ```
 
 Useful cache mounts:

@@ -30,6 +30,8 @@ ARG LLVM_VERSION=14
 ARG USERNAME=dev
 ARG UID=1000
 ARG GID=1000
+ARG APP_UID=65532
+ARG APP_GID=65532
 ARG IMAGE_SOURCE=unknown
 ARG IMAGE_REVISION=unknown
 ARG IMAGE_VERSION=dev
@@ -74,6 +76,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 FROM os-base AS runtime-base
 
 ARG APP_HOME=/opt/app
+ARG APP_UID
+ARG APP_GID
 ARG DEBIAN_FRONTEND
 
 ENV APP_HOME=${APP_HOME} \
@@ -91,9 +95,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         /usr/share/lintian/* \
         /var/cache/debconf/*-old
 
-RUN groupadd -g 65532 app \
+RUN groupadd -g ${APP_GID} app \
     && useradd \
-        --uid 65532 \
+        --uid ${APP_UID} \
         --gid app \
         --home-dir ${APP_HOME} \
         --shell /usr/sbin/nologin \
@@ -119,7 +123,7 @@ ARG DEBIAN_FRONTEND
 USER root
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        gdb \
+        gdb-minimal \
         strace \
         procps \
         iproute2 \
@@ -153,6 +157,7 @@ ARG PYTHON_VERSION
 ARG GCC_VERSION
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
     CONAN_HOME=/root/.conan2 \
     CCACHE_DIR=/root/.cache/ccache \
     UV_CACHE_DIR=/opt/uv/cache \
@@ -160,13 +165,13 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PATH="/opt/conan/bin:${PATH}"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential \
         gcc \
         g++ \
+        make \
+        patch \
         libgcc-${GCC_VERSION}-dev \
         cmake \
         ninja-build \
-        make \
         pkg-config \
         git \
         ccache \
@@ -176,7 +181,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         /usr/share/man/* \
         /usr/share/info/* \
         /usr/share/lintian/* \
-        /var/cache/debconf/*-old
+        /usr/share/cmake-*/Help \
+        /usr/lib/python*/test \
+        /var/cache/debconf/*-old \
+    && find /usr -type d -name __pycache__ -prune -exec rm -rf {} + \
+    && find /usr -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
 
 COPY --from=uv-bin /uv /uvx /bin/
 
@@ -190,7 +199,13 @@ RUN mkdir -p /opt/uv/cache /opt/uv/python \
     && ln -sf /opt/conan/bin/conan /usr/local/bin/conan \
     && conan --version \
     && find /opt/uv /opt/conan -type d -name __pycache__ -prune -exec rm -rf {} + \
-    && find /opt/uv /opt/conan -type f -name '*.pyc' -delete \
+    && find /opt/uv /opt/conan -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete \
+    && find /opt/uv/python -type d \( -name ensurepip -o -name idlelib -o -name turtledemo \) -prune -exec rm -rf {} + \
+    && find /opt/uv/python -path '*/site-packages/pip*' -prune -exec rm -rf {} + \
+    && find /opt/uv/python -path '*/site-packages/setuptools*' -prune -exec rm -rf {} + \
+    && find /opt/uv/python -path '*/site-packages/pkg_resources' -prune -exec rm -rf {} + \
+    && find /opt/uv/python -type f -name '*.a' -delete \
+    && { find /opt/uv /opt/conan -type f \( -name '*.so' -o -name '*.so.*' -o -perm /111 \) -exec strip --strip-unneeded {} + 2>/dev/null || true; } \
     && rm -rf /opt/uv/cache/*  # 清理 uv 缓存以减小镜像体积
 
 RUN cat > /usr/local/bin/conan-detect-gnu20-profile <<'EOF'
@@ -242,11 +257,14 @@ ARG DEBIAN_FRONTEND
 ARG LLVM_VERSION
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        clang \
-        clang-format \
-        clang-tidy \
-        lld \
+        clang-${LLVM_VERSION} \
+        lld-${LLVM_VERSION} \
         libclang-rt-${LLVM_VERSION}-dev \
+    && for tool in clang clang++ lld ld.lld llvm-symbolizer; do \
+        if [ -e "/usr/bin/${tool}-${LLVM_VERSION}" ]; then \
+            ln -sf "/usr/bin/${tool}-${LLVM_VERSION}" "/usr/local/bin/${tool}"; \
+        fi; \
+    done \
     && rm -rf \
         /var/lib/apt/lists/* \
         /usr/share/doc/* \
@@ -277,7 +295,6 @@ ARG UID
 ARG GID
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        valgrind \
         strace \
         procps \
         iproute2 \
@@ -374,6 +391,7 @@ RUN mkdir -p /etc/ssh/sshd_config.d \
     } > /etc/ssh/sshd_config.d/20-dev-container.conf
 
 ENV DEV_USERNAME=${USERNAME} \
+    DEV_HOME=/home/${USERNAME} \
     CONAN_HOME=/home/${USERNAME}/.conan2 \
     CCACHE_DIR=/home/${USERNAME}/.cache/ccache \
     UV_CACHE_DIR=/home/${USERNAME}/.cache/uv \
@@ -384,16 +402,91 @@ RUN cat > /usr/local/bin/dev-container-entrypoint <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
+dev_user="${DEV_USERNAME:-dev}"
+
+configure_dev_user() {
+    if [[ "$(id -u)" != "0" ]]; then
+        return
+    fi
+
+    if ! id "${dev_user}" >/dev/null 2>&1; then
+        echo "dev-container-entrypoint: user ${dev_user} does not exist" >&2
+        return
+    fi
+
+    local current_uid current_gid target_uid target_gid changed
+    current_uid="$(id -u "${dev_user}")"
+    current_gid="$(id -g "${dev_user}")"
+    target_uid="${DEV_UID:-${current_uid}}"
+    target_gid="${DEV_GID:-${current_gid}}"
+    changed=0
+
+    if [[ "${target_gid}" != "${current_gid}" ]]; then
+        if getent group "${target_gid}" >/dev/null \
+            && [[ "$(getent group "${target_gid}" | cut -d: -f1)" != "${dev_user}" ]]; then
+            echo "dev-container-entrypoint: DEV_GID ${target_gid} already exists; keeping gid ${current_gid}" >&2
+            target_gid="${current_gid}"
+        else
+            groupmod -g "${target_gid}" "${dev_user}"
+            changed=1
+        fi
+    fi
+
+    if [[ "${target_uid}" != "${current_uid}" ]]; then
+        if getent passwd "${target_uid}" >/dev/null \
+            && [[ "$(getent passwd "${target_uid}" | cut -d: -f1)" != "${dev_user}" ]]; then
+            echo "dev-container-entrypoint: DEV_UID ${target_uid} already exists; keeping uid ${current_uid}" >&2
+            target_uid="${current_uid}"
+        else
+            usermod -u "${target_uid}" "${dev_user}"
+            changed=1
+        fi
+    fi
+
+    if [[ "${changed}" == "1" ]]; then
+        local dev_home dev_group
+        dev_home="$(getent passwd "${dev_user}" | cut -d: -f6)"
+        dev_group="$(id -gn "${dev_user}")"
+        chown -R "${dev_user}:${dev_group}" "${dev_home}"
+    fi
+}
+
+install_authorized_keys() {
+    if [[ "$(id -u)" != "0" || -z "${DEV_AUTHORIZED_KEYS:-}" ]]; then
+        return
+    fi
+
+    local dev_home dev_group
+    dev_home="$(getent passwd "${dev_user}" | cut -d: -f6)"
+    dev_group="$(id -gn "${dev_user}")"
+
+    install -d -m 0700 -o "${dev_user}" -g "${dev_group}" "${dev_home}/.ssh"
+    printf '%s\n' "${DEV_AUTHORIZED_KEYS}" > "${dev_home}/.ssh/authorized_keys"
+    chown "${dev_user}:${dev_group}" "${dev_home}/.ssh/authorized_keys"
+    chmod 0600 "${dev_home}/.ssh/authorized_keys"
+}
+
+prepare_sshd() {
+    if [[ "$(id -u)" == "0" ]]; then
+        mkdir -p /run/sshd
+        ssh-keygen -A >/dev/null
+    fi
+}
+
+configure_dev_user
+install_authorized_keys
+
 if [[ $# -eq 0 ]]; then
     set -- /usr/sbin/sshd -D -e
 fi
 
 if [[ "${1}" == "sshd" || "${1}" == "/usr/sbin/sshd" ]]; then
+    prepare_sshd
     exec /usr/sbin/sshd "${@:2}"
 fi
 
 if [[ "$(id -u)" == "0" ]]; then
-    exec sudo -E -H -u "${DEV_USERNAME:-dev}" -- "$@"
+    exec sudo -E -H -u "${dev_user}" -- "$@"
 fi
 
 exec "$@"
@@ -422,7 +515,7 @@ ARG USERNAME
 USER root
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        gdb \
+        gdb-minimal \
     && rm -rf \
         /var/lib/apt/lists/* \
         /usr/share/doc/* \
@@ -463,34 +556,42 @@ ARG LLVM_VERSION
 USER root
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        clang \
-        clangd \
-        clang-format \
-        clang-tidy \
-        lld \
+        clang-${LLVM_VERSION} \
+        clangd-${LLVM_VERSION} \
+        clang-format-${LLVM_VERSION} \
+        clang-tidy-${LLVM_VERSION} \
+        lld-${LLVM_VERSION} \
         libclang-rt-${LLVM_VERSION}-dev \
-        gdb \
+        gdb-minimal \
+    && for tool in clang clang++ clangd clang-format clang-tidy lld ld.lld llvm-symbolizer; do \
+        if [ -e "/usr/bin/${tool}-${LLVM_VERSION}" ]; then \
+            ln -sf "/usr/bin/${tool}-${LLVM_VERSION}" "/usr/local/bin/${tool}"; \
+        fi; \
+    done \
     && rm -rf \
         /var/lib/apt/lists/* \
         /usr/share/doc/* \
         /usr/share/man/* \
         /usr/share/info/* \
         /usr/share/lintian/* \
-        /var/cache/debconf/*-old
+        /usr/lib/python*/test \
+        /var/cache/debconf/*-old \
+    && find /usr -type d -name __pycache__ -prune -exec rm -rf {} + \
+    && find /usr -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
 
 USER ${USERNAME}
 
-ENV CC=/usr/bin/clang \
-    CXX=/usr/bin/clang++
+ENV CC=clang \
+    CXX=clang++
 
 # 关键修复：此时环境变量 CC=clang 已经生效，Conan 会正确识别出 Clang 并生成对应的 Profile
 RUN conan-detect-gnu20-profile \
-    && echo 'export CC=/usr/bin/clang' >> /home/${USERNAME}/.bashrc \
-    && echo 'export CXX=/usr/bin/clang++' >> /home/${USERNAME}/.bashrc
+    && echo 'export CC=clang' >> /home/${USERNAME}/.bashrc \
+    && echo 'export CXX=clang++' >> /home/${USERNAME}/.bashrc
 
 USER root
 RUN printf '%s\n' \
-        "SetEnv CC=/usr/bin/clang CXX=/usr/bin/clang++ CONAN_HOME=/home/${USERNAME}/.conan2 CCACHE_DIR=/home/${USERNAME}/.cache/ccache UV_CACHE_DIR=/home/${USERNAME}/.cache/uv UV_PYTHON_INSTALL_DIR=/home/${USERNAME}/.local/share/uv/python" \
+        "SetEnv CC=clang CXX=clang++ CONAN_HOME=/home/${USERNAME}/.conan2 CCACHE_DIR=/home/${USERNAME}/.cache/ccache UV_CACHE_DIR=/home/${USERNAME}/.cache/uv UV_PYTHON_INSTALL_DIR=/home/${USERNAME}/.local/share/uv/python" \
         > /etc/ssh/sshd_config.d/30-toolchain-env.conf
 
 WORKDIR /workspace
